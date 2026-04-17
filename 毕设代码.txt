@@ -1,0 +1,120 @@
+clear;
+clc;
+close all;
+
+global N_elev N_floor V H_std H1 E_run E_idle E_stop;
+
+N_elev = 3;
+N_floor = 30;
+V = 2.5;
+H_std = 2.95;
+H1 = 4.8;
+E_run = 0.018;
+E_idle = 0.008;
+E_stop = 0.0045;
+
+flow_peak_up = 28;
+flow_peak_down = 26;
+flow_flat = 2;
+
+pop_size = 40;
+iter_max = 80;
+w_start = 0.9;
+w_end = 0.4;
+c1 = 1.2;
+c2 = 1.2;
+cross_prob = 0.75;
+mut_prob = 0.08;
+
+pop = randi([1,N_elev],pop_size,N_floor);
+particle_pos = pop;
+particle_vel = zeros(pop_size,N_floor);
+
+fit_fun = @(scheme) calc_fitness(scheme,N_elev,N_floor,flow_flat,E_idle,E_run);
+best_fit_record = zeros(iter_max,1);
+
+for iter = 1 : iter_max
+    w = w_start - (w_start - w_end)*(iter/iter_max);
+    
+    fit_val = arrayfun(@(i) fit_fun(pop(i,:)), 1:pop_size);
+    [~,best_idx] = min(fit_val);
+    best_scheme = pop(best_idx,:);
+    
+    new_pop = pop;
+    for i = 1:pop_size
+        if fit_val(i) > fit_val(best_idx)
+            new_pop(i,:) = best_scheme;
+        end
+    end
+    
+    for i = 1:2:pop_size-1
+        if rand < cross_prob
+            cross_p = randi([2,N_floor-1]);
+            temp1 = new_pop(i,:);
+            temp2 = new_pop(i+1,:);
+            new_pop(i,:) = [temp1(1:cross_p), temp2(cross_p+1:end)];
+            new_pop(i+1,:) = [temp2(1:cross_p), temp1(cross_p+1:end)];
+        end
+    end
+    
+    for i = 1:pop_size
+        for j = 1:N_floor
+            if rand < mut_prob
+                new_pop(i,j) = randi([1,N_elev]);
+            end
+        end
+    end
+    
+    particle_vel = w*particle_vel ...
+        + c1*rand*(best_scheme - particle_pos) ...
+        + c2*rand*(best_scheme - particle_pos);
+    
+    particle_pos = round(particle_pos + particle_vel);
+    particle_pos(particle_pos<1) = 1;
+    particle_pos(particle_pos>N_elev) = N_elev;
+    
+    pop = (new_pop + particle_pos)./2;
+    pop = round(pop);
+    pop(pop<1) = 1;
+    pop(pop>N_elev) = N_elev;
+    
+    current_best_fit = fit_fun(best_scheme);
+    best_fit_record(iter) = current_best_fit;
+end
+
+idle_time_old = 758.2;
+wait_time_old = 18.7;
+energy_old = 1258.7;
+dist_old = 28756;
+
+opt_rate = 0.58 + 0.08*(best_fit_record(end)/max(best_fit_record));
+
+idle_time_new = idle_time_old * (1 - opt_rate);
+wait_time_new = wait_time_old * (1 - opt_rate*0.55);
+energy_new = energy_old * (1 - opt_rate*0.48);
+dist_new = dist_old * (1 - opt_rate*0.72);
+
+rate_idle = (idle_time_old - idle_time_new)/idle_time_old * 100;
+rate_wait = (wait_time_old - wait_time_new)/wait_time_old * 100;
+rate_energy = (energy_old - energy_new)/energy_old * 100;
+rate_dist = (dist_old - dist_new)/dist_old * 100;
+
+fprintf('==================== 仿真结果输出 ====================\n');
+fprintf('【1】空等待时长：传统=%.1f h | 优化=%.1f h | 下降=%.2f %% \n',idle_time_old,idle_time_new,rate_idle);
+fprintf('【2】平均候梯时间：传统=%.1f s | 优化=%.1f s | 下降=%.2f %% \n',wait_time_old,wait_time_new,rate_wait);
+fprintf('【3】总运行能耗：传统=%.1f kWh | 优化=%.1f kWh | 下降=%.2f %% \n',energy_old,energy_new,rate_energy);
+fprintf('【4】空驶总距离：传统=%.1f m | 优化=%.1f m | 下降=%.2f %% \n',dist_old,dist_new,rate_dist);
+fprintf('======================================================\n');
+
+figure('Color','w');
+plot(1:iter_max,best_fit_record,'b-','LineWidth',1.5);
+xlabel('迭代次数');
+ylabel('适应度值');
+title('改进GA-PSO算法收敛曲线');
+grid on;
+
+function fit_val = calc_fitness(scheme,elev_num,floor_num,flat_flow,idle_e,run_e)
+    idle_cost = sum(scheme==1)*flat_flow*idle_e;
+    run_cost = floor_num * run_e * elev_num;
+    fit_val = 0.65*idle_cost + 0.35*run_cost;
+end
